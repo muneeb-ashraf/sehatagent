@@ -6,6 +6,7 @@ Integration with Google Cloud Vertex AI for LLM and embeddings
 from typing import Optional, List, Dict, Any
 import asyncio
 import structlog
+import os
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from google.cloud import aiplatform
