@@ -1,0 +1,30 @@
+{
+  "emergency_keywords": {
+    "en": ["chest pain", "can't breathe", "unconscious", "severe bleeding", "heart attack", "stroke"],
+    "ur": ["سینے میں درد", "سانس نہیں آ رہی", "بے ہوش", "شدید خون بہنا"],
+    "roman_urdu": ["seene mein dard", "saans nahi aa rahi", "behosh", "shadeed khoon"]
+  },
+  "symptom_mappings": {
+    "fever": ["fever", "bukhar", "بخار", "temperature", "taap"],
+    "headache": ["headache", "sir dard", "سر درد", "sar dard"],
+    "cough": ["cough", "khansi", "کھانسی"],
+    "cold": ["cold", "zukam", "زکام"],
+    "diarrhea": ["diarrhea", "dast", "دست", "loose motion"],
+    "fatigue": ["fatigue", "thakan", "تھکاوٹ", "kamzori", "کمزوری"],
+    "stomach_pain": ["stomach pain", "pait dard", "پیٹ درد"]
+  },
+  "basic_recommendations": {
+    "fever": {
+      "en": ["Rest and drink fluids", "Take paracetamol", "See doctor if >3 days"],
+      "ur": ["آرام کریں اور پانی پیں", "پیراسیٹامول لیں", "3 دن سے زیادہ ہو تو ڈاکٹر سے ملیں"]
+    },
+    "headache": {
+      "en": ["Rest in quiet place", "Stay hydrated", "Take pain reliever if needed"],
+      "ur": ["آرام کریں", "پانی پیں", "ضرورت ہو تو درد کی دوائی لیں"]
+    },
+    "diarrhea": {
+      "en": ["Drink ORS frequently", "Eat bland foods", "See doctor if blood in stool"],
+      "ur": ["نمکول پیں", "ہلکا کھانا کھائیں", "پاخانے میں خون ہو تو ڈاکٹر سے ملیں"]
+    }
+  }
+}
