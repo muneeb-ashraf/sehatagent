@@ -11,11 +11,18 @@ Data Sources:
 from typing import List, Dict, Any, Optional
 import re
 from app.agents.base_agent import BaseAgent, AgentRole, AgentContext, AgentDecision
-from app.knowledge.health_knowledge_base import (
-    WHO_HEALTH_DATA, 
-    NIH_CLINICAL_PATTERNS,
-    PAKISTAN_HEALTH_STATISTICS
-)
+
+# Try to import knowledge base, use fallback if not available
+try:
+    from app.knowledge.health_knowledge_base import (
+        WHO_HEALTH_DATA, 
+        NIH_CLINICAL_PATTERNS,
+        PAKISTAN_HEALTH_STATISTICS
+    )
+except ImportError:
+    WHO_HEALTH_DATA = {"fever_management": {"fever_threshold_celsius": 38.0}}
+    NIH_CLINICAL_PATTERNS = {"symptom_duration_guidelines": {}}
+    PAKISTAN_HEALTH_STATISTICS = {"disease_burden": {}}
 
 
 class SymptomAnalyzerAgent(BaseAgent):
@@ -29,15 +36,14 @@ class SymptomAnalyzerAgent(BaseAgent):
     def __init__(self, rag_service=None, vertex_service=None):
         super().__init__(
             name="SymptomAnalyzer",
-            role=AgentRole.ANALYZER,
+            role=AgentRole.SYMPTOM_ANALYZER,
+            description="Analyzes symptoms using WHO/NIH guidelines and Pakistan health data",
             rag_service=rag_service,
-            vertex_service=vertex_service
+            vertex_ai_service=vertex_service
         )
         
         # Comprehensive symptom patterns in multiple languages
-        # Based on WHO and Pakistan Bureau of Statistics common presentations
         self.SYMPTOM_PATTERNS = {
-            # Fever patterns (Typhoid, Dengue, Malaria common in Pakistan)
             "fever": {
                 "patterns": [
                     r"\b(fever|bukhar|بخار|temperature|temp|taap|garmi)\b",
@@ -52,7 +58,6 @@ class SymptomAnalyzerAgent(BaseAgent):
                 "who_threshold_celsius": 38.0
             },
             
-            # Headache patterns
             "headache": {
                 "patterns": [
                     r"\b(headache|sir\s*dard|سر\s*درد|sar\s*dard|head\s*pain)\b",
@@ -66,7 +71,6 @@ class SymptomAnalyzerAgent(BaseAgent):
                 }
             },
             
-            # Cough patterns (TB is 5th highest burden in Pakistan)
             "cough": {
                 "patterns": [
                     r"\b(cough|khansi|کھانسی|khansta|coughing)\b"
@@ -80,7 +84,6 @@ class SymptomAnalyzerAgent(BaseAgent):
                 "tb_indicators": [r"weight loss", r"night sweat", r"evening fever", r"2 hafte se zyada"]
             },
             
-            # Diarrhea patterns (53,000 child deaths/year in Pakistan)
             "diarrhea": {
                 "patterns": [
                     r"\b(diarrhea|diarrhoea|dast|دست|loose\s*motion|pichkari)\b",
@@ -95,221 +98,176 @@ class SymptomAnalyzerAgent(BaseAgent):
                 "dehydration_signs": ["sunken eyes", "dry mouth", "no urine", "thirst"]
             },
             
-            # Fatigue (66% vitamin D deficiency, 41% anemia in women)
             "fatigue": {
                 "patterns": [
                     r"\b(fatigue|tired|thakan|تھکاوٹ|kamzori|کمزوری|weakness)\b",
-                    r"\b(exhausted|weak|low\s*energy|susti)\b"
+                    r"\b(no energy|exhausted|thaka hua|sust)\b"
                 ],
-                "related_conditions": ["anemia", "vitamin_d_deficiency", "diabetes", "thyroid"],
+                "related_conditions": ["anemia", "vitamin_d_deficiency", "diabetes", "thyroid", "depression"],
                 "severity_indicators": {
-                    "persistent": [r"always", r"hamesha", r"ہمیشہ", r"chronic"],
-                    "with_pallor": [r"pale", r"peela", r"پیلا", r"rang"],
+                    "persistent": [r"always", r"hamesha", r"ہمیشہ", r"constant"],
+                    "with_pallor": [r"pale", r"zard", r"peela", r"زرد"]
+                }
+            },
+            
+            "stomach_pain": {
+                "patterns": [
+                    r"\b(stomach|pet|پیٹ|abdomen|abdominal)\s*(pain|dard|درد|ache)\b",
+                    r"\b(pet\s*dard|پیٹ\s*درد|tummy\s*ache)\b"
+                ],
+                "related_conditions": ["gastritis", "typhoid", "appendicitis", "ulcer", "food_poisoning"],
+                "severity_indicators": {
+                    "severe": [r"severe", r"shadeed", r"شدید", r"unbearable"],
+                    "right_lower": [r"right side", r"dayen", r"appendix"],
+                    "with_fever": [r"fever", r"bukhar", r"بخار"]
+                }
+            },
+            
+            "chest_pain": {
+                "patterns": [
+                    r"\b(chest|seena|سینہ|chhati)\s*(pain|dard|درد)\b",
+                    r"\b(seene\s*mein\s*dard|سینے\s*میں\s*درد)\b"
+                ],
+                "related_conditions": ["heart_attack", "angina", "pneumonia", "gerd", "muscle_strain"],
+                "emergency": True,
+                "severity_indicators": {
+                    "radiating": [r"arm", r"jaw", r"bazu", r"بازو"],
                     "with_breathlessness": [r"breath", r"saans", r"سانس"]
                 }
             },
             
-            # Stomach pain
-            "stomach_pain": {
-                "patterns": [
-                    r"\b(stomach\s*pain|pait\s*dard|پیٹ\s*درد|pet\s*dard|abdominal)\b",
-                    r"\b(tummy\s*ache|maida|معدہ)\b"
-                ],
-                "related_conditions": ["gastritis", "typhoid", "appendicitis", "ulcer"],
-                "severity_indicators": {
-                    "severe": [r"severe", r"shadeed", r"شدید"],
-                    "location_right_lower": [r"right side", r"dahini", r"دائیں"],
-                    "with_vomiting": [r"vomit", r"ulti", r"الٹی"]
-                }
-            },
-            
-            # Breathing difficulty - EMERGENCY
             "breathing_difficulty": {
                 "patterns": [
-                    r"\b(breathing|saans|سانس|breath|breathless)\b",
-                    r"\b(shortness\s*of\s*breath|saans\s*phoolna|سانس\s*پھولنا)\b"
+                    r"\b(breathless|breath|saans|سانس)\s*(difficulty|problem|taklif|تکلیف)\b",
+                    r"\b(saans\s*lene\s*mein|can't\s*breathe|dam\s*ghutna)\b"
                 ],
-                "related_conditions": ["asthma", "pneumonia", "heart_failure", "anemia"],
+                "related_conditions": ["asthma", "pneumonia", "heart_failure", "covid", "anemia"],
                 "emergency": True
             },
             
-            # Chest pain - EMERGENCY
-            "chest_pain": {
-                "patterns": [
-                    r"\b(chest\s*pain|seene\s*mein\s*dard|سینے\s*میں\s*درد)\b",
-                    r"\b(heart\s*pain|dil\s*mein\s*dard|دل\s*کا\s*درد)\b"
-                ],
-                "related_conditions": ["heart_attack", "angina", "gastric"],
-                "emergency": True
-            },
-            
-            # Vomiting
             "vomiting": {
                 "patterns": [
-                    r"\b(vomit|ulti|الٹی|qai|قے|throwing\s*up)\b"
+                    r"\b(vomit|ulti|الٹی|qai|throw\s*up|nausea)\b"
                 ],
-                "related_conditions": ["gastroenteritis", "food_poisoning", "pregnancy"],
+                "related_conditions": ["gastroenteritis", "food_poisoning", "pregnancy", "migraine"],
                 "severity_indicators": {
                     "bloody": [r"blood", r"khoon", r"خون"],
-                    "persistent": [r"can't keep", r"everything", r"bar bar"]
+                    "persistent": [r"bar bar", r"again and again", r"continuous"]
                 }
             },
             
-            # Body aches (dengue indicator)
-            "body_aches": {
+            "joint_pain": {
                 "patterns": [
-                    r"\b(body\s*ache|jism\s*mein\s*dard|جسم\s*میں\s*درد|badan\s*dard)\b",
-                    r"\b(muscle\s*pain|joint\s*pain|joron\s*mein\s*dard|جوڑوں\s*میں\s*درد)\b"
+                    r"\b(joint|jor|جوڑ|joron)\s*(pain|dard|درد)\b",
+                    r"\b(arthritis|gathiya|گٹھیا)\b"
                 ],
-                "related_conditions": ["dengue", "viral_fever", "chikungunya", "flu"]
+                "related_conditions": ["arthritis", "dengue", "chikungunya", "gout", "vitamin_d_deficiency"]
             },
             
-            # Jaundice (Hepatitis B 2.5%, Hepatitis C 5% in Pakistan)
-            "jaundice": {
+            "skin_rash": {
                 "patterns": [
-                    r"\b(jaundice|yarqan|یرقان|yellow\s*eyes|peeli\s*aankhen)\b",
-                    r"\b(yellow\s*skin|peela\s*rang|پیلا\s*رنگ)\b"
+                    r"\b(rash|daane|دانے|skin|jild|چھال)\b",
+                    r"\b(itching|khujli|کھجلی|allergy)\b"
                 ],
-                "related_conditions": ["hepatitis_b", "hepatitis_c", "hepatitis_a", "liver_disease"]
+                "related_conditions": ["dengue", "allergy", "measles", "chickenpox", "eczema"]
             },
             
-            # Dizziness (anemia, hypertension indicator)
-            "dizziness": {
+            "urinary_issues": {
                 "patterns": [
-                    r"\b(dizzy|chakkar|چکر|vertigo|giddy)\b"
+                    r"\b(urin|peshab|پیشاب|bladder)\b",
+                    r"\b(burning|jalaan|جلن)\s*(urin|peshab)\b"
                 ],
-                "related_conditions": ["anemia", "hypertension", "hypotension", "dehydration"]
-            },
-            
-            # Weight loss (TB, diabetes, cancer indicator)
-            "weight_loss": {
-                "patterns": [
-                    r"\b(weight\s*loss|wajan\s*kam|وزن\s*کم|patla\s*ho\s*gaya)\b"
-                ],
-                "related_conditions": ["tuberculosis", "diabetes", "thyroid", "cancer"]
-            },
-            
-            # Night sweats (TB indicator)
-            "night_sweats": {
-                "patterns": [
-                    r"\b(night\s*sweat|raat\s*ko\s*paseena|رات\s*کو\s*پسینہ)\b"
-                ],
-                "related_conditions": ["tuberculosis", "lymphoma", "infection"]
+                "related_conditions": ["uti", "kidney_stone", "diabetes", "prostate"]
             }
         }
         
-        # WHO danger signs
-        self.WHO_DANGER_SIGNS = WHO_HEALTH_DATA["imci_danger_signs"]["children_under_5"]
-        
-        # NIH red flags
-        self.RED_FLAGS = NIH_CLINICAL_PATTERNS["red_flag_symptoms"]
-        
-        # Duration guidelines
-        self.DURATION_GUIDELINES = NIH_CLINICAL_PATTERNS["symptom_duration_guidelines"]
+        # Emergency symptoms requiring immediate referral
+        self.EMERGENCY_SYMPTOMS = [
+            "chest_pain", "breathing_difficulty", "unconscious", "severe_bleeding",
+            "stroke_symptoms", "seizure"
+        ]
     
     async def process(self, context: AgentContext) -> AgentContext:
-        """Process user input to identify symptoms"""
+        """Analyze symptoms from user input"""
         
-        user_input = context.translated_input or context.user_input
-        user_input_lower = user_input.lower()
+        user_input = (context.translated_input or context.user_input).lower()
         
         identified_symptoms = []
-        health_indicators = {}
         severity_flags = []
+        potential_conditions = set()
+        health_indicators = {}
         
         # Pattern-based symptom extraction
         for symptom_name, symptom_data in self.SYMPTOM_PATTERNS.items():
-            for pattern in symptom_data["patterns"]:
-                if re.search(pattern, user_input_lower, re.IGNORECASE):
+            patterns = symptom_data.get("patterns", [])
+            
+            for pattern in patterns:
+                if re.search(pattern, user_input, re.IGNORECASE):
                     identified_symptoms.append(symptom_name)
                     
-                    # Check severity
-                    for severity_level, indicators in symptom_data.get("severity_indicators", {}).items():
-                        for indicator in indicators:
-                            if re.search(indicator, user_input_lower, re.IGNORECASE):
-                                severity_flags.append(f"{symptom_name}_{severity_level}")
-                                health_indicators[f"{symptom_name}_severity"] = severity_level
-                    
-                    # Emergency check
+                    # Check for emergency symptoms
                     if symptom_data.get("emergency"):
                         context.is_emergency = True
-                        context.safety_flags.append(f"EMERGENCY_SYMPTOM:{symptom_name}")
+                        context.safety_flags.append(f"EMERGENCY: {symptom_name} detected")
+                    
+                    # Add related conditions
+                    potential_conditions.update(symptom_data.get("related_conditions", []))
+                    
+                    # Check severity indicators
+                    for severity, indicators in symptom_data.get("severity_indicators", {}).items():
+                        for indicator in indicators:
+                            if re.search(indicator, user_input, re.IGNORECASE):
+                                severity_flags.append(f"{symptom_name}:{severity}")
                     
                     break
         
-        # Extract duration
-        duration_patterns = [
-            (r"(\d+)\s*din|(\d+)\s*day", "days"),
-            (r"(\d+)\s*hafte|(\d+)\s*week", "weeks"),
-            (r"(\d+)\s*ghante|(\d+)\s*hour", "hours"),
-            (r"kal\s*se|since\s*yesterday", "1 day"),
-            (r"parson\s*se", "2 days")
-        ]
-        
-        for pattern, unit in duration_patterns:
-            match = re.search(pattern, user_input_lower, re.IGNORECASE)
-            if match:
-                value = match.group(1) if match.group(1) else "1"
-                health_indicators["duration"] = f"{value} {unit}"
-                break
-        
-        # Check WHO danger signs
-        for danger_sign in self.WHO_DANGER_SIGNS:
-            if danger_sign.lower() in user_input_lower:
-                context.is_emergency = True
-                context.safety_flags.append(f"WHO_DANGER_SIGN:{danger_sign}")
-        
-        # Map to potential conditions
-        potential_conditions = set()
-        for symptom in identified_symptoms:
-            if symptom in self.SYMPTOM_PATTERNS:
-                conditions = self.SYMPTOM_PATTERNS[symptom].get("related_conditions", [])
-                potential_conditions.update(conditions)
-        
-        health_indicators["potential_conditions"] = list(potential_conditions)
-        health_indicators["severity_flags"] = severity_flags
-        
-        # LLM extraction if few symptoms found
-        if self.vertex_service and len(identified_symptoms) < 2 and not context.degraded_mode:
-            try:
-                llm_symptoms = await self._extract_with_llm(user_input, context.user_language)
-                for symptom in llm_symptoms:
-                    if symptom not in identified_symptoms:
-                        identified_symptoms.append(symptom)
-            except Exception as e:
-                self.logger.warning(f"LLM extraction failed: {e}")
+        # Extract duration if mentioned
+        duration_match = re.search(r'(\d+)\s*(din|day|week|hafte|month|mahine)', user_input, re.IGNORECASE)
+        if duration_match:
+            health_indicators["duration"] = f"{duration_match.group(1)} {duration_match.group(2)}"
         
         # Update context
         context.symptoms = list(set(identified_symptoms))
-        context.health_indicators = health_indicators
+        context.health_indicators = {
+            "potential_conditions": list(potential_conditions),
+            "severity_flags": severity_flags,
+            **health_indicators
+        }
         
         # Log decision
         decision = AgentDecision(
             agent_name=self.name,
-            decision=f"Identified {len(identified_symptoms)} symptoms: {', '.join(identified_symptoms)}",
+            decision=f"Identified {len(identified_symptoms)} symptoms: {', '.join(identified_symptoms) if identified_symptoms else 'none'}",
             reasoning=f"Pattern matching with WHO/NIH guidelines. Severity: {severity_flags}. Potential conditions: {list(potential_conditions)[:5]}",
             confidence=0.85 if identified_symptoms else 0.5,
-            inputs_used=["user_input", "WHO_HEALTH_DATA", "NIH_CLINICAL_PATTERNS", "PAKISTAN_HEALTH_STATISTICS"],
+            inputs_used=["user_input", "WHO_HEALTH_DATA", "NIH_CLINICAL_PATTERNS"],
             language=context.user_language
         )
         context.decisions.append(decision)
         
         return context
     
-    async def _extract_with_llm(self, user_input: str, language: str) -> List[str]:
-        """Use LLM for complex symptom extraction"""
+    def get_explanation(self, context: AgentContext, language: str = "en") -> str:
+        """Generate human-readable explanation of symptom analysis"""
         
-        prompt = f"""Extract health symptoms from this text. Consider Pakistan-common conditions (typhoid, dengue, TB, diabetes, hypertension, anemia).
-
-Text: {user_input}
-
-Return ONLY comma-separated symptom keywords in English. If none, return "none".
-"""
+        symptoms = context.symptoms or []
+        indicators = context.health_indicators or {}
         
-        response = await self.vertex_service.generate_text(prompt)
+        if not symptoms:
+            explanations = {
+                "en": "I couldn't identify specific symptoms from your description. Please describe what you're feeling in more detail.",
+                "ur": "میں آپ کی تفصیل سے مخصوص علامات کی شناخت نہیں کر سکا۔ براہ کرم مزید تفصیل سے بتائیں۔",
+                "roman_urdu": "Main aapki description se symptoms identify nahi kar saka. Please mazeed detail mein batayen."
+            }
+        else:
+            symptom_list = ", ".join(symptoms)
+            conditions = indicators.get("potential_conditions", [])[:3]
+            condition_list = ", ".join(conditions) if conditions else "various conditions"
+            
+            explanations = {
+                "en": f"Based on your description, I identified these symptoms: {symptom_list}. These could be related to {condition_list}. Data sources: WHO guidelines, Pakistan health statistics.",
+                "ur": f"آپ کی تفصیل کی بنیاد پر، یہ علامات ملیں: {symptom_list}۔ یہ {condition_list} سے متعلق ہو سکتی ہیں۔",
+                "roman_urdu": f"Aapki description se yeh symptoms milay: {symptom_list}. Yeh {condition_list} se related ho sakti hain."
+            }
         
-        if response and response.lower() != "none":
-            symptoms = [s.strip().lower().replace(" ", "_") for s in response.split(",")]
-            return [s for s in symptoms if s in self.SYMPTOM_PATTERNS]
-        
-        return []
+        return explanations.get(language, explanations["en"])

@@ -11,13 +11,22 @@ Uses pre-loaded knowledge from:
 from typing import List, Dict, Any
 import re
 from app.agents.base_agent import BaseAgent, AgentRole, AgentContext, AgentDecision
-from app.knowledge.health_knowledge_base import (
-    WHO_HEALTH_DATA,
-    PAKISTAN_HEALTH_STATISTICS,
-    PAKISTAN_NUTRITION_DATA,
-    NIH_CLINICAL_PATTERNS,
-    EMERGENCY_CONTACTS_PAKISTAN
-)
+
+# Try to load knowledge base, fallback to inline if not available
+try:
+    from app.knowledge.health_knowledge_base import (
+        WHO_HEALTH_DATA,
+        PAKISTAN_HEALTH_STATISTICS,
+        PAKISTAN_NUTRITION_DATA,
+        NIH_CLINICAL_PATTERNS,
+        EMERGENCY_CONTACTS_PAKISTAN
+    )
+except ImportError:
+    WHO_HEALTH_DATA = {}
+    PAKISTAN_HEALTH_STATISTICS = {}
+    PAKISTAN_NUTRITION_DATA = {}
+    NIH_CLINICAL_PATTERNS = {}
+    EMERGENCY_CONTACTS_PAKISTAN = {"rescue_1122": {"number": "1122"}, "edhi": {"number": "115"}}
 
 
 # Comprehensive offline knowledge base
@@ -164,8 +173,7 @@ OFFLINE_KNOWLEDGE_BASE = {
             "High fever",
             "Continues >2 days"
         ],
-        "pakistan_context": "Diarrhea kills 53,000 children/year in Pakistan. ORS saves lives!",
-        "who_ors": WHO_HEALTH_DATA["dehydration_protocol"]["ors_who_formula"]["home_recipe"]
+        "pakistan_context": "Diarrhea kills 53,000 children/year in Pakistan. ORS saves lives!"
     },
     
     "fatigue": {
@@ -188,156 +196,78 @@ OFFLINE_KNOWLEDGE_BASE = {
             ],
             "roman_urdu": [
                 "7-8 ghante achi neend lein",
-                "Khoon ki kami ka TEST KARWAYEIN (41% women mein hai)",
+                "ANEMIA KA TEST karwayein (41% women mein hai)",
                 "Vitamin D check karwayein (66% mein kami hai)",
-                "Iron wali ghizayein khayein: kaleji, palak, chanay",
+                "Iron wali ghizayen khayein: kaleji, palak, chanay",
                 "Subah 15-20 minute dhoop lein Vitamin D ke liye"
             ]
         },
-        "when_to_see_doctor": [
-            "Persistent fatigue despite rest",
-            "With pale skin or dizziness",
-            "With weight loss",
-            "With shortness of breath"
-        ],
-        "pakistan_context": "66% Pakistanis have Vitamin D deficiency, 41% women have anemia. GET TESTED!",
-        "iron_rich_foods": ["Kaleji (liver)", "Palak (spinach)", "Chanay (chickpeas)", "Gur (jaggery)", "Khajoor (dates)"],
-        "vitamin_d_sources": ["Morning sunlight (15-20 min)", "Eggs", "Fish", "Fortified milk"]
+        "pakistan_context": "Anemia (41% women) and Vitamin D deficiency (66%) are very common. Get tested!"
     },
     
     "stomach_pain": {
-        "keywords": ["stomach pain", "pait dard", "پیٹ درد", "pet dard", "abdominal", "maida"],
-        "possible_conditions": ["Gastritis", "Acidity", "Food poisoning", "Typhoid", "Appendicitis"],
+        "keywords": ["stomach", "pet", "پیٹ", "abdominal", "pain", "dard", "درد", "pet dard"],
+        "possible_conditions": ["Gastritis", "Food poisoning", "Appendicitis", "Typhoid", "Ulcer"],
         "recommendations": {
             "en": [
-                "Rest and avoid heavy meals",
+                "Rest and avoid spicy/oily foods",
+                "Drink clear fluids",
+                "Try ginger tea for nausea",
                 "Apply warm compress on abdomen",
-                "Drink mint tea or ajwain water",
-                "Avoid spicy and oily foods",
-                "Eat small, frequent meals"
+                "Avoid NSAIDs (ibuprofen, aspirin)"
             ],
             "ur": [
-                "آرام کریں اور بھاری کھانے سے پرہیز",
+                "آرام کریں، مرچ مسالے سے پرہیز",
+                "صاف مشروبات پیں",
+                "متلی میں ادرک کا قہوہ",
                 "پیٹ پر گرم کپڑا رکھیں",
-                "پودینے کی چائے یا اجوائن کا پانی پیں",
-                "مصالحے دار اور تلی ہوئی غذا سے پرہیز",
-                "تھوڑا تھوڑا بار بار کھائیں"
+                "درد کی گولیاں (بروفین) سے پرہیز"
             ],
             "roman_urdu": [
-                "Aaram karein aur bhaari khane se parhair",
-                "Pait par garam kapra rakhein",
-                "Pudine ki chai ya ajwain ka paani piyen",
-                "Masaledar aur tala hua khana na khayein",
-                "Thora thora baar baar khayein"
+                "Aaram karein, mirch masalay se parhair",
+                "Saaf mashroobat piyen",
+                "Mutli mein adrak ka qehwa",
+                "Pet par garam kapra rakhein",
+                "Dard ki goliyan (brufen) se parhair"
             ]
         },
         "when_to_see_doctor": [
             "Severe pain (especially right lower side - appendix?)",
-            "Blood in vomit or stool",
-            "High fever with pain",
-            "Pain >24 hours",
-            "Unable to eat or drink"
-        ]
-    },
-    
-    "body_aches": {
-        "keywords": ["body ache", "jism mein dard", "جسم میں درد", "badan dard", "joint pain", "joron mein dard"],
-        "possible_conditions": ["Viral fever", "Dengue (seasonal)", "Flu", "Chikungunya", "Arthritis"],
-        "recommendations": {
-            "en": [
-                "Complete bed rest",
-                "Stay hydrated",
-                "Take paracetamol for pain",
-                "If with high fever (Aug-Nov), GET DENGUE TEST",
-                "Warm compress on affected areas"
-            ],
-            "ur": [
-                "مکمل آرام کریں",
-                "پانی خوب پیں",
-                "درد کے لیے پیراسیٹامول لیں",
-                "تیز بخار ہو (اگست-نومبر) تو ڈینگی ٹیسٹ کروائیں",
-                "متاثرہ جگہ پر گرم کپڑا رکھیں"
-            ],
-            "roman_urdu": [
-                "Mukammal aaram karein",
-                "Paani khoob piyen",
-                "Dard ke liye paracetamol lein",
-                "Tez bukhar ho (Aug-Nov) to DENGUE TEST karwayein",
-                "Mutasira jagah par garam kapra rakhein"
-            ]
-        },
-        "when_to_see_doctor": [
-            "Severe joint/muscle pain with high fever",
-            "Rash appears",
-            "Bleeding from gums or nose",
-            "Pain not improving in 3 days"
+            "With fever (typhoid?)",
+            "Vomiting blood",
+            "No bowel movement for days",
+            "Pain spreading to chest"
         ],
-        "dengue_warning": "Aug-Nov mein tez bukhar + shadeed jism dard = DENGUE TEST! ASPIRIN NA LEIN!"
+        "pakistan_context": "Typhoid is common - if fever with stomach pain, get tested."
     },
     
-    "vomiting": {
-        "keywords": ["vomit", "ulti", "الٹی", "qai", "throwing up"],
-        "possible_conditions": ["Gastroenteritis", "Food poisoning", "Migraine", "Pregnancy"],
+    "diabetes": {
+        "keywords": ["diabetes", "sugar", "شوگر", "blood sugar", "glucose"],
+        "possible_conditions": ["Type 2 Diabetes (26% Pakistani adults)", "Type 1 Diabetes", "Pre-diabetes"],
         "recommendations": {
             "en": [
-                "Rest and don't eat for 1-2 hours",
-                "Sip small amounts of water or ORS",
-                "Avoid solid food until vomiting stops",
-                "Try ginger tea or mint tea",
-                "Gradually start bland foods (rice, toast)"
+                "Check fasting blood sugar if >40 years",
+                "Reduce sugar and refined carbs (white rice, white bread)",
+                "Exercise 30 minutes daily (walking is good)",
+                "Include fiber: vegetables, whole grains, daal",
+                "Monitor blood sugar regularly if diabetic"
             ],
             "ur": [
-                "آرام کریں اور 1-2 گھنٹے کچھ نہ کھائیں",
-                "تھوڑا تھوڑا پانی یا نمکول پیں",
-                "الٹی بند ہونے تک ٹھوس غذا نہ کھائیں",
-                "ادرک کی چائے یا پودینے کی چائے لیں",
-                "آہستہ آہستہ ہلکا کھانا (چاول، ٹوسٹ) شروع کریں"
+                "40 سال سے زیادہ عمر ہو تو خالی پیٹ شوگر چیک کروائیں",
+                "چینی اور سفید چاول، سفید ڈبل روٹی کم کھائیں",
+                "روزانہ 30 منٹ ورزش (چہل قدمی)",
+                "سبزیاں، دال، چھلکے والی روٹی کھائیں",
+                "شوگر ہو تو باقاعدگی سے چیک کروائیں"
             ],
             "roman_urdu": [
-                "Aaram karein aur 1-2 ghante kuch na khayein",
-                "Thora thora paani ya ORS piyen",
-                "Ulti band hone tak solid khana na khayein",
-                "Adrak ki chai ya pudine ki chai lein",
-                "Ahista ahista halka khana shuru karein"
+                "40 saal se zyada ho to fasting sugar check karwayein",
+                "Cheeni, safed chawal, double roti kam khayein",
+                "Rozana 30 minute exercise (walk)",
+                "Sabziyan, daal, whole wheat roti khayein",
+                "Sugar ho to regularly check karwayein"
             ]
         },
-        "when_to_see_doctor": [
-            "Blood in vomit",
-            "Can't keep any fluids down",
-            "Signs of dehydration",
-            "Severe abdominal pain",
-            "Continues >24 hours"
-        ]
-    },
-    
-    "jaundice": {
-        "keywords": ["jaundice", "yarqan", "یرقان", "yellow eyes", "peeli aankhen"],
-        "possible_conditions": ["Hepatitis A", "Hepatitis B (2.5%)", "Hepatitis C (5%)", "Liver disease"],
-        "recommendations": {
-            "en": [
-                "Complete bed rest",
-                "Drink plenty of fluids (sugarcane juice, coconut water)",
-                "Avoid oily, fried foods",
-                "GET HEPATITIS B & C TESTS",
-                "Do NOT share razors or toothbrushes"
-            ],
-            "ur": [
-                "مکمل آرام کریں",
-                "خوب پانی پیں (گنے کا رس، ناریل پانی)",
-                "تلی ہوئی غذا سے پرہیز",
-                "ہیپاٹائٹس بی اور سی ٹیسٹ کروائیں",
-                "استرا اور ٹوتھ برش شیئر نہ کریں"
-            ],
-            "roman_urdu": [
-                "Mukammal aaram karein",
-                "Khoob paani piyen (gannay ka ras, nariyal paani)",
-                "Tali hui ghiza se parhair",
-                "HEPATITIS B & C TEST KARWAYEIN",
-                "Ustra aur toothbrush share na karein"
-            ]
-        },
-        "pakistan_context": "12 million Pakistanis have Hepatitis C. IT IS NOW CURABLE in 12 weeks!",
-        "prevention": "Use only DISPOSABLE syringes. Avoid roadside barbers."
+        "pakistan_context": "26% Pakistani adults have diabetes - 50% don't even know! Get tested after 40."
     },
     
     "dizziness": {
@@ -387,9 +317,10 @@ class OfflineHelperAgent(BaseAgent):
     def __init__(self, rag_service=None, vertex_service=None):
         super().__init__(
             name="OfflineHelper",
-            role=AgentRole.FALLBACK,
+            role=AgentRole.OFFLINE_HELPER,
+            description="Provides rule-based health guidance when cloud services are unavailable",
             rag_service=rag_service,
-            vertex_service=vertex_service
+            vertex_ai_service=vertex_service
         )
         
         self.knowledge_base = OFFLINE_KNOWLEDGE_BASE
@@ -466,6 +397,30 @@ class OfflineHelperAgent(BaseAgent):
         context.decisions.append(decision)
         
         return context
+    
+    def get_explanation(self, context: AgentContext, language: str = "en") -> str:
+        """
+        Generate human-readable explanation of agent's decisions
+        
+        Args:
+            context: Agent context with decisions
+            language: Output language (en, ur, roman_urdu)
+            
+        Returns:
+            Explanation string in requested language
+        """
+        explanations = {
+            "en": f"I analyzed your symptoms using offline health data from WHO guidelines and Pakistan health statistics. "
+                  f"I found {len(context.symptoms)} relevant conditions and provided {len(context.recommendations)} recommendations. "
+                  f"This is a basic analysis - please consult a doctor for proper diagnosis.",
+            "ur": f"میں نے آپ کی علامات کا آف لائن تجزیہ کیا WHO اور پاکستان کے صحت کے اعداد و شمار سے۔ "
+                  f"مجھے {len(context.symptoms)} متعلقہ حالات ملے اور {len(context.recommendations)} مشورے دیے۔ "
+                  f"یہ بنیادی تجزیہ ہے - درست تشخیص کے لیے ڈاکٹر سے ملیں۔",
+            "roman_urdu": f"Maine aapki alamat ka offline tajziya kiya WHO aur Pakistan health data se. "
+                          f"Mujhe {len(context.symptoms)} conditions milay aur {len(context.recommendations)} mashwaray diye. "
+                          f"Yeh basic analysis hai - doctor se zaroor milein."
+        }
+        return explanations.get(language, explanations["en"])
     
     def _is_emergency(self, text: str) -> bool:
         """Check if text contains emergency keywords"""

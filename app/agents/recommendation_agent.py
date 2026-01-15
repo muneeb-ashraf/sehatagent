@@ -1,427 +1,377 @@
 """
-Health Advisor Agent
-Provides preventive guidance using nutrition data and WHO guidelines
+Health Advisor Agent (Recommendation Agent)
+Provides health recommendations using WHO guidelines and Pakistan nutrition data
 
 Data Sources:
+- WHO Global Health Data (https://www.who.int/data)
 - Open Food Facts (https://world.openfoodfacts.org/data)
-- WHO Health Guidelines (https://www.who.int/data)
-- Pakistan Nutrition Data
+- Pakistan Bureau of Statistics (https://pslm-sdgs.data.gov.pk/health/index)
 """
 
 from typing import List, Dict, Any
 from app.agents.base_agent import BaseAgent, AgentRole, AgentContext, AgentDecision
-from app.knowledge.health_knowledge_base import (
-    PAKISTAN_NUTRITION_DATA,
-    WHO_HEALTH_DATA,
-    PAKISTAN_HEALTH_STATISTICS,
-    EMERGENCY_CONTACTS_PAKISTAN
-)
+
+# Try to import knowledge base
+try:
+    from app.knowledge.health_knowledge_base import (
+        WHO_HEALTH_DATA,
+        PAKISTAN_NUTRITION_DATA,
+        PAKISTAN_HEALTH_STATISTICS,
+        EMERGENCY_CONTACTS_PAKISTAN
+    )
+except ImportError:
+    WHO_HEALTH_DATA = {}
+    PAKISTAN_NUTRITION_DATA = {}
+    PAKISTAN_HEALTH_STATISTICS = {}
+    EMERGENCY_CONTACTS_PAKISTAN = {"rescue_1122": {"number": "1122"}, "edhi": {"number": "115"}}
 
 
 class HealthAdvisorAgent(BaseAgent):
     """
-    Generates health recommendations using:
-    - Pakistan-specific nutrition data (Open Food Facts)
+    Provides health recommendations using:
     - WHO treatment guidelines
+    - Pakistan-specific nutrition recommendations from Open Food Facts
     - Local food alternatives
     """
     
     def __init__(self, rag_service=None, vertex_service=None):
         super().__init__(
             name="HealthAdvisor",
-            role=AgentRole.ADVISOR,
+            role=AgentRole.HEALTH_ADVISOR,
+            description="Provides health recommendations using WHO guidelines and Pakistan nutrition data",
             rag_service=rag_service,
-            vertex_service=vertex_service
+            vertex_ai_service=vertex_service
         )
         
-        # Health recommendations based on WHO and Pakistan data
-        self.HEALTH_RECOMMENDATIONS = {
+        # Recommendations database based on WHO and Pakistan data
+        self.RECOMMENDATIONS = {
             "fever": {
-                "immediate": {
-                    "en": [
-                        "Rest in a cool, comfortable place",
-                        "Drink plenty of fluids - water, ORS, fresh juices",
-                        "Take paracetamol for fever (NOT aspirin if dengue suspected)",
-                        "Apply cool compress on forehead",
-                        "Wear light, loose clothing"
-                    ],
-                    "ur": [
-                        "ٹھنڈی آرام دہ جگہ پر لیٹیں",
-                        "خوب پانی پیں - پانی، نمکول، تازہ جوس",
-                        "پیراسیٹامول لیں (ڈینگی کا شبہ ہو تو اسپرین نہ لیں)",
-                        "ماتھے پر ٹھنڈا کپڑا رکھیں",
-                        "ہلکے ڈھیلے کپڑے پہنیں"
-                    ],
-                    "roman_urdu": [
-                        "Thandi jagah par aaram karein",
-                        "Khoob paani piyen - paani, ORS, juice",
-                        "Paracetamol lein (dengue ho to aspirin na lein)",
-                        "Mathay par thanda kapra rakhein",
-                        "Halke dheelay kapray pehnein"
-                    ]
-                },
-                "nutrition": {
-                    "en": ["Light, easily digestible food", "Khichdi, dal chawal, soups", "Avoid oily and spicy food"],
-                    "ur": ["ہلکی آسانی سے ہضم ہونے والی غذا", "کھچڑی، دال چاول، سوپ", "تلی ہوئی اور مصالحے دار غذا سے پرہیز"],
-                    "roman_urdu": ["Halka khana khayein", "Khichdi, daal chawal, soup", "Tala hua aur masaledar khana na khayein"]
-                },
-                "see_doctor_if": {
-                    "en": ["Fever persists more than 3 days", "Temperature exceeds 103°F (39.5°C)", "Severe headache or body aches", "Rash appears", "Difficulty breathing"],
-                    "ur": ["3 دن سے زیادہ بخار رہے", "درجہ حرارت 103°F سے زیادہ ہو", "شدید سر درد یا جسم میں درد", "جلد پر دانے نکلیں", "سانس لینے میں تکلیف"]
-                },
-                "who_guideline": WHO_HEALTH_DATA["fever_management"]
-            },
-            
-            "diarrhea": {
-                "immediate": {
-                    "en": [
-                        "START ORS IMMEDIATELY - after every loose stool",
-                        "Home ORS: 1 liter clean water + ½ teaspoon salt + 6 tablespoons sugar",
-                        "Continue breastfeeding for infants",
-                        "Give Zinc supplement for 10-14 days",
-                        "Wash hands with soap frequently"
-                    ],
-                    "ur": [
-                        "فوری نمکول شروع کریں - ہر پتلے پاخانے کے بعد",
-                        "گھر پر نمکول: 1 لیٹر صاف پانی + آدھا چائے کا چمچ نمک + 6 کھانے کے چمچ چینی",
-                        "بچوں کو دودھ پلانا جاری رکھیں",
-                        "زنک کی گولی 10-14 دن دیں",
-                        "صابن سے ہاتھ دھوتے رہیں"
-                    ],
-                    "roman_urdu": [
-                        "Fori ORS shuru karein - har patle pakhane ke baad",
-                        "Ghar par ORS: 1 liter saaf paani + aadha chamach namak + 6 chamach cheeni",
-                        "Bachon ko doodh pilana jari rakhein",
-                        "Zinc ki goli 10-14 din dein",
-                        "Sabun se haath dhote rahein"
-                    ]
-                },
-                "nutrition": {
-                    "en": ["BRAT diet: Banana, Rice, Apple, Toast", "Yogurt (dahi) with rice", "Avoid milk (except breast milk)", "Avoid fatty and spicy foods"],
-                    "ur": ["کیلا، چاول، سیب، ٹوسٹ کھائیں", "دہی چاول کھائیں", "دودھ سے پرہیز (ماں کا دودھ چھوڑ کر)", "چکنائی اور مصالحے دار کھانے سے پرہیز"],
-                    "roman_urdu": ["Kela, chawal, saib, toast khayein", "Dahi chawal khayein", "Doodh se parhair (maa ka doodh chor kar)"]
-                },
-                "see_doctor_if": {
-                    "en": ["Blood in stool", "Unable to drink fluids", "Signs of severe dehydration (sunken eyes, no urine)", "High fever", "Continues more than 2 days"],
-                    "ur": ["پاخانے میں خون", "پانی نہ پی سکے", "شدید پانی کی کمی کی علامات (دھنسی آنکھیں، پیشاب نہ آئے)", "تیز بخار", "2 دن سے زیادہ جاری رہے"]
-                },
-                "who_ors_formula": WHO_HEALTH_DATA["dehydration_protocol"]["ors_who_formula"]
-            },
-            
-            "headache": {
-                "immediate": {
-                    "en": [
-                        "Rest in a quiet, dark room",
-                        "Stay well hydrated - drink 8-10 glasses of water",
-                        "Apply cold compress on forehead or neck",
-                        "Take paracetamol if needed",
-                        "Check your blood pressure"
-                    ],
-                    "ur": [
-                        "پرسکون اندھیرے کمرے میں آرام کریں",
-                        "پانی خوب پیں - 8-10 گلاس",
-                        "ماتھے یا گردن پر ٹھنڈا کپڑا رکھیں",
-                        "ضرورت ہو تو پیراسیٹامول لیں",
-                        "بلڈ پریشر چیک کروائیں"
-                    ],
-                    "roman_urdu": [
-                        "Pursukoon andhere kamre mein aaram karein",
-                        "Paani khoob piyen - 8-10 glass",
-                        "Mathay ya gardan par thanda kapra rakhein",
-                        "Zaroorat ho to paracetamol lein",
-                        "BP check karwayein"
-                    ]
-                },
-                "nutrition": {
-                    "en": ["Avoid caffeine excess", "Eat regular meals - don't skip", "Magnesium-rich foods: spinach, nuts, whole grains"],
-                    "ur": ["زیادہ چائے/کافی سے پرہیز", "باقاعدگی سے کھانا کھائیں", "پالک، گری دار میوے، سابت اناج کھائیں"]
-                },
-                "see_doctor_if": {
-                    "en": ["Sudden severe 'worst headache ever'", "Headache with fever and stiff neck", "Vision changes", "Headache after head injury", "Daily recurring headaches"],
-                    "ur": ["اچانک شدید ترین سر درد", "بخار اور گردن میں اکڑن کے ساتھ", "نظر میں تبدیلی", "سر پر چوٹ کے بعد", "روزانہ سر درد"]
-                }
+                "en": [
+                    "Rest in a cool, comfortable place",
+                    "Drink plenty of fluids (water, ORS, fresh juices)",
+                    "Take paracetamol 500mg every 6 hours for adults (15mg/kg for children)",
+                    "Apply cool compress on forehead",
+                    "Monitor temperature every 4 hours",
+                    "If dengue suspected - Do NOT take aspirin or ibuprofen!"
+                ],
+                "ur": [
+                    "ٹھنڈی آرام دہ جگہ پر لیٹیں",
+                    "خوب پانی پیں (پانی، نمکول، تازہ جوس)",
+                    "پیراسیٹامول 500mg ہر 6 گھنٹے (بچوں کے لیے 15mg/kg)",
+                    "ماتھے پر ٹھنڈا کپڑا رکھیں",
+                    "ہر 4 گھنٹے درجہ حرارت چیک کریں",
+                    "ڈینگی کا شبہ ہو تو اسپرین یا بروفین نہ لیں!"
+                ],
+                "roman_urdu": [
+                    "Thandi aaram deh jagah par laitein",
+                    "Khoob paani piyen (paani, ORS, fresh juice)",
+                    "Paracetamol 500mg har 6 ghante (bachon ke liye 15mg/kg)",
+                    "Mathay par thanda kapra rakhein",
+                    "Har 4 ghante temperature check karein",
+                    "Dengue ka shuba ho to aspirin ya brufen NA lein!"
+                ],
+                "when_to_see_doctor": ["Fever >3 days", "Temperature >103°F (39.5°C)", "Rash appears", "Severe headache"],
+                "source": "WHO IMCI Guidelines / Pakistan Health Ministry"
             },
             
             "cough": {
-                "immediate": {
-                    "en": [
-                        "Drink warm fluids - honey with warm water, herbal tea",
-                        "Steam inhalation 2-3 times daily",
-                        "Gargle with warm salt water",
-                        "Use honey (1-2 teaspoons) for soothing throat",
-                        "Cover mouth when coughing"
-                    ],
-                    "ur": [
-                        "گرم مشروبات پیں - شہد والا گرم پانی، قہوہ",
-                        "بھاپ لیں دن میں 2-3 بار",
-                        "نمک کے گرم پانی سے غرارے کریں",
-                        "شہد (1-2 چائے کے چمچ) گلے کے لیے لیں",
-                        "کھانستے وقت منہ ڈھانپیں"
-                    ],
-                    "roman_urdu": [
-                        "Garam mashroobat piyen - shehad wala garam paani",
-                        "Bhaap lein din mein 2-3 baar",
-                        "Namak ke garam paani se ghararay karein",
-                        "Shehad galay ke liye lein",
-                        "Khanstay waqt munh dhaampein"
-                    ]
-                },
-                "nutrition": {
-                    "en": ["Warm soups", "Ginger tea", "Turmeric milk (haldi doodh)", "Avoid cold drinks and ice cream"],
-                    "ur": ["گرم سوپ", "ادرک کی چائے", "ہلدی والا دودھ", "ٹھنڈے مشروبات اور آئس کریم سے پرہیز"]
-                },
-                "see_doctor_if": {
-                    "en": ["Cough persists more than 2 weeks", "Blood in sputum", "Weight loss or night sweats", "High fever", "Difficulty breathing"],
-                    "ur": ["2 ہفتے سے زیادہ کھانسی", "بلغم میں خون", "وزن کم ہونا یا رات کو پسینہ", "تیز بخار", "سانس لینے میں تکلیف"]
-                },
-                "tb_warning": {
-                    "en": "If cough persists >2 weeks with weight loss and night sweats, GET TESTED FOR TB",
-                    "ur": "اگر 2 ہفتے سے زیادہ کھانسی ہو اور وزن کم ہو رہا ہو تو ٹی بی کا ٹیسٹ کروائیں",
-                    "roman_urdu": "Agar 2 hafte se zyada khansi ho aur wajan kam ho to TB test karwayein"
-                }
+                "en": [
+                    "Drink warm fluids (honey + warm water, herbal tea, soup)",
+                    "Steam inhalation 2-3 times daily",
+                    "Gargle with warm salt water",
+                    "Use honey (1-2 teaspoons) to soothe throat",
+                    "Cover mouth when coughing",
+                    "If >2 weeks: Get TB test! (Pakistan has high TB burden)"
+                ],
+                "ur": [
+                    "گرم مشروبات پیں (شہد + گرم پانی، قہوہ، سوپ)",
+                    "بھاپ لیں دن میں 2-3 بار",
+                    "نمک کے گرم پانی سے غرارے کریں",
+                    "شہد (1-2 چمچ) گلے کو سکون دینے کے لیے",
+                    "کھانستے وقت منہ ڈھانپیں",
+                    "اگر 2 ہفتے سے زیادہ: TB ٹیسٹ کروائیں!"
+                ],
+                "roman_urdu": [
+                    "Garam mashroobat piyen (shehad + garam paani, qehwa, soup)",
+                    "Bhaap lein din mein 2-3 baar",
+                    "Namak ke garam paani se gharare karein",
+                    "Shehad (1-2 chamach) galay ko sukoon dene ke liye",
+                    "Khanste waqt munh dhaampein",
+                    "Agar 2 hafte se zyada: TB TEST karwayein!"
+                ],
+                "when_to_see_doctor": ["Cough >2 weeks", "Blood in sputum", "Weight loss", "Night sweats"],
+                "source": "WHO Global TB Report / Pakistan"
+            },
+            
+            "diarrhea": {
+                "en": [
+                    "START ORS IMMEDIATELY after every loose stool",
+                    "Home ORS recipe: 1 liter clean water + ½ tsp salt + 6 tbsp sugar",
+                    "Continue breastfeeding for babies",
+                    "Give Zinc supplements for 10-14 days (children)",
+                    "Wash hands with soap frequently",
+                    "Drink only boiled or filtered water"
+                ],
+                "ur": [
+                    "فوری طور پر نمکول شروع کریں ہر پتلے پاخانے کے بعد",
+                    "گھر کا نمکول: 1 لیٹر صاف پانی + آدھا چمچ نمک + 6 چمچ چینی",
+                    "بچوں کو دودھ پلانا جاری رکھیں",
+                    "بچوں کو زنک 10-14 دن دیں",
+                    "صابن سے ہاتھ دھوتے رہیں",
+                    "صرف ابلا یا فلٹر پانی پیں"
+                ],
+                "roman_urdu": [
+                    "FORI ORS shuru karein har patle pakhane ke baad",
+                    "Ghar ka ORS: 1 liter saaf paani + aadha chamach namak + 6 chamach cheeni",
+                    "Bachon ko doodh pilana jari rakhein",
+                    "Bachon ko Zinc 10-14 din dein",
+                    "Sabun se haath dhote rahein",
+                    "Sirf ubla ya filter paani piyen"
+                ],
+                "when_to_see_doctor": ["Blood in stool", "Unable to drink", "Sunken eyes", "No urine >6 hours"],
+                "source": "WHO/UNICEF ORS Guidelines"
             },
             
             "fatigue": {
-                "immediate": {
-                    "en": [
-                        "Ensure 7-8 hours of quality sleep",
-                        "Check for anemia - very common in Pakistan (41% women)",
-                        "Get Vitamin D level checked (66% deficiency in Pakistan)",
-                        "Light exercise - 30 minutes walking daily",
-                        "Stay hydrated"
-                    ],
-                    "ur": [
-                        "7-8 گھنٹے اچھی نیند لیں",
-                        "خون کی کمی چیک کروائیں - پاکستان میں بہت عام (41% خواتین)",
-                        "وٹامن ڈی چیک کروائیں (66% میں کمی ہے)",
-                        "ہلکی ورزش - روزانہ 30 منٹ چہل قدمی",
-                        "پانی خوب پیں"
-                    ],
-                    "roman_urdu": [
-                        "7-8 ghante achi neend lein",
-                        "Khoon ki kami check karwayein - 41% women mein hoti hai",
-                        "Vitamin D check karwayein - 66% mein kami hai",
-                        "Halki exercise - rozana 30 minute walk",
-                        "Paani khoob piyen"
-                    ]
-                },
-                "nutrition_for_anemia": PAKISTAN_NUTRITION_DATA["iron_rich_foods"],
-                "nutrition_for_vitamin_d": PAKISTAN_NUTRITION_DATA["vitamin_d_sources"],
-                "see_doctor_if": {
-                    "en": ["Persistent fatigue despite rest", "With pale skin or dizziness", "With weight loss", "With shortness of breath"],
-                    "ur": ["آرام کے باوجود مسلسل تھکاوٹ", "پیلے رنگ یا چکر کے ساتھ", "وزن کم ہونے کے ساتھ", "سانس پھولنے کے ساتھ"]
-                }
+                "en": [
+                    "Ensure 7-8 hours quality sleep",
+                    "GET TESTED FOR ANEMIA (41% Pakistani women affected)",
+                    "GET VITAMIN D CHECKED (66% are deficient)",
+                    "Iron-rich foods: Kaleji (liver), Palak (spinach), Channay (chickpeas), Gur (jaggery)",
+                    "Morning sunlight 15-20 minutes for Vitamin D",
+                    "Get fasting blood sugar test if >40 years"
+                ],
+                "ur": [
+                    "7-8 گھنٹے اچھی نیند لیں",
+                    "خون کی کمی کا ٹیسٹ کروائیں (41% پاکستانی خواتین متاثر)",
+                    "وٹامن ڈی چیک کروائیں (66% میں کمی)",
+                    "آئرن والی غذائیں: کلیجی، پالک، چنے، گڑ",
+                    "صبح 15-20 منٹ دھوپ لیں وٹامن ڈی کے لیے",
+                    "40 سال سے زیادہ ہو تو فاسٹنگ شوگر ٹیسٹ کروائیں"
+                ],
+                "roman_urdu": [
+                    "7-8 ghante achi neend lein",
+                    "ANEMIA KA TEST karwayein (41% Pakistani women mein)",
+                    "VITAMIN D CHECK karwayein (66% mein kami)",
+                    "Iron wali ghizayein: Kaleji, Palak, Channay, Gur",
+                    "Subah 15-20 minute dhoop lein Vitamin D ke liye",
+                    "40 saal se zyada ho to fasting sugar test karwayein"
+                ],
+                "when_to_see_doctor": ["Fatigue >2 weeks", "With weight loss", "With fever"],
+                "source": "Pakistan Bureau of Statistics / Open Food Facts"
+            },
+            
+            "headache": {
+                "en": [
+                    "Rest in a quiet, dark room",
+                    "Drink plenty of water (8-10 glasses daily)",
+                    "Apply cold compress on forehead",
+                    "Take paracetamol if needed",
+                    "CHECK YOUR BLOOD PRESSURE (33% Pakistanis have hypertension)",
+                    "Reduce screen time and stress"
+                ],
+                "ur": [
+                    "پرسکون اندھیرے کمرے میں آرام کریں",
+                    "خوب پانی پیں (روزانہ 8-10 گلاس)",
+                    "ماتھے پر ٹھنڈا کپڑا رکھیں",
+                    "ضرورت ہو تو پیراسیٹامول لیں",
+                    "بلڈ پریشر چیک کروائیں (33% پاکستانیوں کو ہائی بی پی ہے)",
+                    "اسکرین ٹائم اور تناؤ کم کریں"
+                ],
+                "roman_urdu": [
+                    "Pursukoon andhera kamra mein aaram karein",
+                    "Khoob paani piyen (rozana 8-10 glass)",
+                    "Mathay par thanda kapra rakhein",
+                    "Zaroorat ho to paracetamol lein",
+                    "BP CHECK KARWAYEIN (33% Pakistanion ko high BP hai)",
+                    "Screen time aur stress kam karein"
+                ],
+                "when_to_see_doctor": ["Sudden severe headache", "With fever and stiff neck", "Vision changes"],
+                "source": "National Health Survey Pakistan / WHO"
             },
             
             "stomach_pain": {
-                "immediate": {
-                    "en": [
-                        "Rest and avoid heavy meals",
-                        "Apply warm compress on abdomen",
-                        "Drink mint tea or ajwain water",
-                        "Avoid spicy, oily, and acidic foods",
-                        "Take small, frequent meals"
-                    ],
-                    "ur": [
-                        "آرام کریں اور بھاری کھانے سے پرہیز",
-                        "پیٹ پر گرم کپڑا رکھیں",
-                        "پودینے کی چائے یا اجوائن کا پانی پیں",
-                        "مصالحے دار، تلی ہوئی اور تیزابی غذا سے پرہیز",
-                        "تھوڑا تھوڑا بار بار کھائیں"
-                    ],
-                    "roman_urdu": [
-                        "Aaram karein aur bhaari khane se parhair",
-                        "Pait par garam kapra rakhein",
-                        "Pudine ki chai ya ajwain ka paani piyen",
-                        "Masaledaar aur tala hua khana na khayein",
-                        "Thora thora baar baar khayein"
-                    ]
-                },
-                "see_doctor_if": {
-                    "en": ["Severe pain especially right lower side (appendix)", "Blood in vomit or stool", "High fever with pain", "Pain lasting more than 24 hours", "Inability to eat or drink"],
-                    "ur": ["شدید درد خاص طور پر دائیں نچلے حصے میں", "الٹی یا پاخانے میں خون", "درد کے ساتھ تیز بخار", "24 گھنٹے سے زیادہ درد", "کچھ کھا پی نہ سکیں"]
-                }
+                "en": [
+                    "Rest and avoid spicy/oily foods",
+                    "Drink clear fluids and stay hydrated",
+                    "Try ginger tea for nausea",
+                    "Avoid NSAIDs (ibuprofen, aspirin) on empty stomach",
+                    "If with fever - get tested for typhoid",
+                    "Right lower pain = See doctor immediately (appendix?)"
+                ],
+                "ur": [
+                    "آرام کریں، مرچ مسالے سے پرہیز",
+                    "صاف مشروبات پیں",
+                    "متلی میں ادرک کا قہوہ",
+                    "خالی پیٹ درد کی گولیاں سے پرہیز",
+                    "بخار ہو تو ٹائیفائیڈ ٹیسٹ کروائیں",
+                    "دائیں نیچے درد = فوری ڈاکٹر (اپینڈکس؟)"
+                ],
+                "roman_urdu": [
+                    "Aaram karein, mirch masalay se parhair",
+                    "Saaf mashroobat piyen",
+                    "Mutli mein adrak ka qehwa",
+                    "Khali pet pain killers se parhair",
+                    "Bukhar ho to typhoid test karwayein",
+                    "Dayen neeche dard = Fori doctor (appendix?)"
+                ],
+                "when_to_see_doctor": ["Severe right lower pain", "With high fever", "Vomiting blood"],
+                "source": "WHO Guidelines / Pakistan Health Ministry"
             },
             
-            "body_aches": {
-                "immediate": {
-                    "en": [
-                        "Complete bed rest",
-                        "Stay well hydrated",
-                        "Take paracetamol for pain",
-                        "If with high fever, consider dengue test (especially Aug-Nov)",
-                        "Apply warm compress on affected areas"
-                    ],
-                    "ur": [
-                        "مکمل آرام کریں",
-                        "پانی خوب پیں",
-                        "درد کے لیے پیراسیٹامول لیں",
-                        "تیز بخار ہو تو ڈینگی ٹیسٹ کروائیں (خاص طور پر اگست-نومبر)",
-                        "متاثرہ جگہ پر گرم کپڑا رکھیں"
-                    ],
-                    "roman_urdu": [
-                        "Mukammal aaram karein",
-                        "Paani khoob piyen",
-                        "Dard ke liye paracetamol lein",
-                        "Tez bukhar ho to dengue test karwayein (Aug-Nov mein)",
-                        "Mutasira jagah par garam kapra rakhein"
-                    ]
-                },
-                "dengue_warning": {
-                    "en": "If severe body/joint pain with high fever during monsoon season (Aug-Nov), GET DENGUE TEST. Do NOT take aspirin!",
-                    "ur": "اگر مانسون میں (اگست-نومبر) تیز بخار کے ساتھ شدید جسم/جوڑوں میں درد ہو تو ڈینگی ٹیسٹ کروائیں۔ اسپرین نہ لیں!",
-                    "roman_urdu": "Aug-Nov mein tez bukhar ke sath shadeed jism/joron mein dard ho to DENGUE TEST karwayein. ASPIRIN NA LEIN!"
-                }
+            "chest_pain": {
+                "en": [
+                    "⚠️ EMERGENCY - Call 1122 immediately",
+                    "Sit upright and stay calm",
+                    "Chew an aspirin (if not allergic and no bleeding)",
+                    "Loosen tight clothing",
+                    "Do NOT drive yourself - call ambulance"
+                ],
+                "ur": [
+                    "⚠️ ایمرجنسی - فوری 1122 کال کریں",
+                    "سیدھے بیٹھیں اور پرسکون رہیں",
+                    "اسپرین چبائیں (اگر الرجی نہیں)",
+                    "تنگ کپڑے ڈھیلے کریں",
+                    "خود گاڑی نہ چلائیں - ایمبولینس بلائیں"
+                ],
+                "roman_urdu": [
+                    "⚠️ EMERGENCY - Fori 1122 call karein",
+                    "Seedhe baithein aur pursukoon rahein",
+                    "Aspirin chabayein (agar allergy nahi)",
+                    "Tang kapray dheele karein",
+                    "Khud gaari na chalayein - ambulance bulayein"
+                ],
+                "when_to_see_doctor": ["IMMEDIATELY - This is an emergency"],
+                "source": "WHO Cardiovascular Guidelines"
             },
             
-            "jaundice": {
-                "immediate": {
-                    "en": [
-                        "Complete bed rest",
-                        "Drink plenty of fluids - sugarcane juice, coconut water",
-                        "Avoid oily, fried, and heavy foods",
-                        "Get Hepatitis B and C tests",
-                        "Do NOT share razors, toothbrushes"
-                    ],
-                    "ur": [
-                        "مکمل آرام کریں",
-                        "خوب پانی پیں - گنے کا رس، ناریل پانی",
-                        "تلی ہوئی اور بھاری غذا سے پرہیز",
-                        "ہیپاٹائٹس بی اور سی ٹیسٹ کروائیں",
-                        "استرا، ٹوتھ برش شیئر نہ کریں"
-                    ],
-                    "roman_urdu": [
-                        "Mukammal aaram karein",
-                        "Khoob paani piyen - gannay ka ras, nariyal paani",
-                        "Tali hui aur bhaari ghiza se parhair",
-                        "Hepatitis B aur C test karwayein",
-                        "Ustra, toothbrush share na karein"
-                    ]
-                },
-                "hepatitis_info": {
-                    "en": "Hepatitis C is now CURABLE in 12 weeks with new medicines. Get tested!",
-                    "ur": "ہیپاٹائٹس سی اب نئی دوائیوں سے 12 ہفتوں میں قابل علاج ہے۔ ٹیسٹ کروائیں!",
-                    "roman_urdu": "Hepatitis C ab 12 hafton mein theek ho sakti hai. Test karwayein!"
-                },
-                "prevention": PAKISTAN_HEALTH_STATISTICS["disease_burden"]["hepatitis_b_c"]["prevention"]
+            "breathing_difficulty": {
+                "en": [
+                    "⚠️ EMERGENCY if severe - Call 1122",
+                    "Sit upright, don't lie flat",
+                    "Stay calm and take slow breaths",
+                    "Open windows for fresh air",
+                    "Use inhaler if you have asthma"
+                ],
+                "ur": [
+                    "⚠️ شدید ہو تو ایمرجنسی - 1122 کال کریں",
+                    "سیدھے بیٹھیں، لیٹیں نہیں",
+                    "پرسکون رہیں، آہستہ سانس لیں",
+                    "کھڑکی کھولیں تازہ ہوا کے لیے",
+                    "دمہ ہو تو انہیلر استعمال کریں"
+                ],
+                "roman_urdu": [
+                    "⚠️ Shadeed ho to EMERGENCY - 1122 call karein",
+                    "Seedhe baithein, laitein NAHI",
+                    "Pursukoon rahein, aahista saans lein",
+                    "Khidki kholein taza hawa ke liye",
+                    "Dama ho to inhaler use karein"
+                ],
+                "when_to_see_doctor": ["IMMEDIATELY if severe"],
+                "source": "WHO Emergency Guidelines"
             }
         }
         
-        # Emergency contacts
-        self.EMERGENCY_CONTACTS = EMERGENCY_CONTACTS_PAKISTAN
+        self.emergency_contacts = EMERGENCY_CONTACTS_PAKISTAN
     
     async def process(self, context: AgentContext) -> AgentContext:
-        """Generate health recommendations"""
+        """Generate health recommendations based on symptoms and risks"""
         
-        symptoms = context.symptoms
-        risks = context.identified_risks
+        symptoms = context.symptoms or []
         language = context.user_language
         recommendations = []
-        nutrition_advice = []
         
-        # Generate recommendations for each symptom
+        # Check for emergency first
+        if context.is_emergency:
+            emergency_msg = {
+                "en": f"⚠️ EMERGENCY: Call 1122 (Rescue) or 115 (Edhi) immediately!",
+                "ur": f"⚠️ ایمرجنسی: فوری 1122 (ریسکیو) یا 115 (ایدھی) کال کریں!",
+                "roman_urdu": f"⚠️ EMERGENCY: Fori 1122 (Rescue) ya 115 (Edhi) call karein!"
+            }
+            recommendations.append(emergency_msg.get(language, emergency_msg["en"]))
+        
+        # Get recommendations for each symptom
         for symptom in symptoms:
-            if symptom in self.HEALTH_RECOMMENDATIONS:
-                rec_data = self.HEALTH_RECOMMENDATIONS[symptom]
+            if symptom in self.RECOMMENDATIONS:
+                rec_data = self.RECOMMENDATIONS[symptom]
+                symptom_recs = rec_data.get(language, rec_data.get("en", []))
+                recommendations.extend(symptom_recs)
                 
-                # Get immediate recommendations in user's language
-                immediate = rec_data.get("immediate", {}).get(language, rec_data.get("immediate", {}).get("en", []))
-                recommendations.extend(immediate)
-                
-                # Get nutrition advice
-                nutrition = rec_data.get("nutrition", {}).get(language, rec_data.get("nutrition", {}).get("en", []))
-                nutrition_advice.extend(nutrition)
-                
-                # Add warning if present
-                for warning_key in ["tb_warning", "dengue_warning", "hepatitis_info"]:
-                    if warning_key in rec_data:
-                        warning = rec_data[warning_key].get(language, rec_data[warning_key].get("en", ""))
-                        if warning:
-                            context.safety_flags.append(warning)
+                # Add "when to see doctor"
+                when_doctor = rec_data.get("when_to_see_doctor", [])
+                if when_doctor:
+                    doctor_msg = {
+                        "en": f"See doctor if: {', '.join(when_doctor)}",
+                        "ur": f"ڈاکٹر سے ملیں اگر: {', '.join(when_doctor)}",
+                        "roman_urdu": f"Doctor se milein agar: {', '.join(when_doctor)}"
+                    }
+                    recommendations.append(doctor_msg.get(language, doctor_msg["en"]))
         
-        # Add nutrition recommendations for identified deficiency risks
-        for risk in risks:
-            if risk.get("type") == "nutritional_deficiency":
-                condition = risk.get("condition", "")
-                sources = risk.get("recommended_sources", {})
-                source_text = sources.get(language, sources.get("en", ""))
-                if source_text:
-                    nutrition_advice.append(f"{condition}: {source_text}")
-        
-        # Add iron-rich foods for anemia symptoms
-        if "fatigue" in symptoms or "weakness" in symptoms or "pale" in symptoms:
-            iron_foods = []
-            for food_key, food_data in PAKISTAN_NUTRITION_DATA["iron_rich_foods"].items():
-                iron_foods.append(f"{food_data['name_roman']} ({food_data['name_en']})")
-            nutrition_advice.append(f"Iron-rich foods: {', '.join(iron_foods[:5])}")
+        # If no specific recommendations, provide general guidance
+        if not recommendations:
+            general = {
+                "en": [
+                    "Rest and stay hydrated",
+                    "Monitor your symptoms",
+                    "If symptoms persist, consult a healthcare professional",
+                    "Emergency? Call 1122 (Rescue) or 115 (Edhi)"
+                ],
+                "ur": [
+                    "آرام کریں اور پانی پیتے رہیں",
+                    "علامات پر نظر رکھیں",
+                    "علامات جاری رہیں تو ڈاکٹر سے ملیں",
+                    "ایمرجنسی؟ 1122 (ریسکیو) یا 115 (ایدھی) کال کریں"
+                ],
+                "roman_urdu": [
+                    "Aaram karein aur paani peete rahein",
+                    "Symptoms par nazar rakhein",
+                    "Symptoms jari rahein to doctor se milein",
+                    "Emergency? 1122 (Rescue) ya 115 (Edhi) call karein"
+                ]
+            }
+            recommendations = general.get(language, general["en"])
         
         # Remove duplicates while preserving order
-        recommendations = list(dict.fromkeys(recommendations))
-        nutrition_advice = list(dict.fromkeys(nutrition_advice))
-        
-        # Use LLM to personalize if available
-        if self.vertex_service and not context.degraded_mode and recommendations:
-            try:
-                personalized = await self._personalize_with_llm(
-                    recommendations, nutrition_advice, symptoms, language
-                )
-                if personalized:
-                    recommendations = personalized
-            except Exception as e:
-                self.logger.warning(f"LLM personalization failed: {e}")
+        seen = set()
+        unique_recommendations = []
+        for rec in recommendations:
+            if rec not in seen:
+                seen.add(rec)
+                unique_recommendations.append(rec)
         
         # Update context
-        context.recommendations = recommendations[:10]  # Limit to top 10
-        context.health_indicators["nutrition_advice"] = nutrition_advice[:5]
-        
-        # Add emergency contacts if high risk
-        if context.health_indicators.get("risk_level") in ["HIGH", "CRITICAL"]:
-            context.health_indicators["emergency_contacts"] = self.EMERGENCY_CONTACTS["emergency_services"]
+        context.recommendations = unique_recommendations[:12]  # Limit to 12 recommendations
         
         # Log decision
         decision = AgentDecision(
             agent_name=self.name,
-            decision=f"Generated {len(recommendations)} recommendations for {len(symptoms)} symptoms",
-            reasoning=f"Used WHO guidelines and Pakistan-specific nutrition data. "
-                      f"Sources: Open Food Facts, Pakistan Bureau of Statistics",
+            decision=f"Generated {len(unique_recommendations)} recommendations for {len(symptoms)} symptoms",
+            reasoning=f"Used WHO guidelines and Pakistan health data. Sources: Open Food Facts, Pakistan Bureau of Statistics, WHO.",
             confidence=0.85,
-            inputs_used=["symptoms", "risks", "PAKISTAN_NUTRITION_DATA", "WHO_HEALTH_DATA"],
+            inputs_used=["symptoms", "risks", "WHO_HEALTH_DATA", "PAKISTAN_NUTRITION_DATA"],
             language=language
         )
         context.decisions.append(decision)
         
         return context
     
-    async def _personalize_with_llm(
-        self, 
-        recommendations: List[str], 
-        nutrition: List[str],
-        symptoms: List[str],
-        language: str
-    ) -> List[str]:
-        """Use LLM to personalize recommendations"""
+    def get_explanation(self, context: AgentContext, language: str = "en") -> str:
+        """Generate human-readable explanation of recommendations"""
         
-        lang_instruction = {
-            "en": "Respond in simple English",
-            "ur": "جواب سادہ اردو میں دیں",
-            "roman_urdu": "Jawab simple Roman Urdu mein dein"
-        }
+        recommendations = context.recommendations or []
+        symptoms = context.symptoms or []
         
-        prompt = f"""You are a helpful health advisor in Pakistan. 
-Given these symptoms: {symptoms}
-And these recommendations: {recommendations[:5]}
-And nutrition advice: {nutrition[:3]}
-
-Create a brief, personalized health guidance message. {lang_instruction.get(language, lang_instruction['en'])}.
-Keep it practical and easy to follow. Include local food names if relevant.
-Maximum 5 bullet points.
-"""
+        if not recommendations:
+            explanations = {
+                "en": "No specific recommendations generated. Please describe your symptoms for personalized advice.",
+                "ur": "کوئی مخصوص مشورے نہیں۔ براہ کرم اپنی علامات تفصیل سے بتائیں۔",
+                "roman_urdu": "Koi specific mashwaray nahi. Please apni symptoms detail mein batayen."
+            }
+        else:
+            explanations = {
+                "en": f"I've provided {len(recommendations)} recommendations based on your symptoms ({', '.join(symptoms)}). These are based on WHO guidelines and Pakistan health data. Always consult a doctor for proper diagnosis.",
+                "ur": f"میں نے آپ کی علامات ({', '.join(symptoms)}) کی بنیاد پر {len(recommendations)} مشورے دیے ہیں۔ یہ WHO اور پاکستان کے صحت کے اعداد و شمار پر مبنی ہیں۔ درست تشخیص کے لیے ڈاکٹر سے ضرور ملیں۔",
+                "roman_urdu": f"Maine aapki symptoms ({', '.join(symptoms)}) ke basis par {len(recommendations)} mashwaray diye hain. Yeh WHO aur Pakistan health data par based hain. Doctor se zaroor milein."
+            }
         
-        response = await self.vertex_service.generate_text(prompt)
-        
-        if response:
-            # Parse bullet points
-            lines = [line.strip() for line in response.split("\n") if line.strip()]
-            return [line.lstrip("•-*").strip() for line in lines if line][:5]
-        
-        return recommendations
+        return explanations.get(language, explanations["en"])

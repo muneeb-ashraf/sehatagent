@@ -20,6 +20,7 @@ class AgentRole(str, Enum):
     HEALTH_ADVISOR = "health_advisor"
     SAFETY_GUARD = "safety_guard"
     OFFLINE_HELPER = "offline_helper"
+    FALLBACK = "fallback"  # Alias for offline_helper
 
 
 class AgentMessage(BaseModel):
@@ -56,6 +57,9 @@ class AgentContext(BaseModel):
     decisions: List[AgentDecision] = []
     is_emergency: bool = False
     degraded_mode: bool = False
+    
+    class Config:
+        arbitrary_types_allowed = True
 
 
 class BaseAgent(ABC):
@@ -71,7 +75,7 @@ class BaseAgent(ABC):
         self,
         name: str,
         role: AgentRole,
-        description: str,
+        description: str = "",
         vertex_ai_service=None,
         rag_service=None
     ):
@@ -79,7 +83,9 @@ class BaseAgent(ABC):
         self.role = role
         self.description = description
         self.vertex_ai = vertex_ai_service
+        self.vertex_service = vertex_ai_service  # Alias for compatibility
         self.rag = rag_service
+        self.rag_service = rag_service  # Alias for compatibility
         self.is_initialized = False
         self.logger = logger.bind(agent=name)
     

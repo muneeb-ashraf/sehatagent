@@ -1,261 +1,165 @@
 """
 Safety Guard Agent
-Ensures ethical, safe, and appropriate health recommendations
+Ensures ethical and safe health recommendations
+
+Validates recommendations against safety guidelines and medical ethics.
 """
 
-from typing import Dict, List, Any, Optional
-import structlog
-
-from app.agents.base_agent import BaseAgent, AgentRole, AgentContext
-from app.config import MEDICAL_SAFETY_CONFIG
-
-logger = structlog.get_logger()
-
-
-# Emergency symptoms requiring immediate attention
-EMERGENCY_SYMPTOMS = {
-    # English
-    "chest pain", "chest tightness", "heart attack", "stroke",
-    "difficulty breathing", "can't breathe", "choking",
-    "unconscious", "unresponsive", "fainted",
-    "severe bleeding", "heavy bleeding",
-    "seizure", "convulsion",
-    "severe allergic reaction", "anaphylaxis",
-    "severe head injury", "head trauma",
-    "suicidal", "self harm", "want to die",
-    
-    # Urdu
-    "سینے میں درد", "سانس نہیں آ رہی", "بے ہوش",
-    "شدید خون بہنا", "دورہ پڑنا", "دل کا دورہ",
-    
-    # Roman Urdu
-    "seene mein dard", "saans nahi aa rahi", "behosh",
-    "shadeed khoon", "dil ka daura",
-}
-
-# Symptoms requiring doctor visit (not emergency but important)
-DOCTOR_REQUIRED_SYMPTOMS = {
-    "blood in stool", "blood in urine", "vomiting blood",
-    "persistent high fever", "fever over 104",
-    "severe abdominal pain", "appendicitis symptoms",
-    "pregnancy complications", "heavy period",
-    "sudden vision loss", "sudden hearing loss",
-    "severe headache worst ever",
-    "lump or growth", "unexplained weight loss",
-    "jaundice", "yellow eyes",
-    
-    # Urdu/Roman Urdu
-    "خون کی الٹی", "پیشاب میں خون", "پاخانے میں خون",
-    "khoon ki ulti", "peshab mein khoon",
-}
-
-# Topics that require professional guidance only
-SENSITIVE_TOPICS = {
-    "pregnancy", "mental health", "suicide", "depression",
-    "sexually transmitted", "hiv", "aids",
-    "cancer", "tumor", "chemotherapy",
-    "prescription medication", "drug interaction",
-}
-
-# Unsafe recommendations to filter out
-UNSAFE_RECOMMENDATIONS = [
-    "take antibiotics without prescription",
-    "self-medicate",
-    "ignore symptoms",
-    "skip doctor",
-    "use unprescribed medication",
-]
+from typing import List, Dict, Any
+from app.agents.base_agent import BaseAgent, AgentRole, AgentContext, AgentDecision
 
 
 class SafetyGuardAgent(BaseAgent):
     """
-    Agent responsible for ensuring safe and ethical health guidance
-    
-    Capabilities:
-    - Detect emergency situations
-    - Filter unsafe recommendations
-    - Add appropriate disclaimers
-    - Ensure ethical compliance
+    Ensures all recommendations are safe and ethical.
+    Checks for emergency conditions and validates advice.
     """
     
-    def __init__(self, vertex_ai_service=None, rag_service=None):
+    def __init__(self, rag_service=None, vertex_service=None):
         super().__init__(
             name="SafetyGuard",
             role=AgentRole.SAFETY_GUARD,
-            description="Ensures ethical and safe recommendations",
-            vertex_ai_service=vertex_ai_service,
-            rag_service=rag_service
+            description="Ensures recommendations are safe and ethical, validates medical advice",
+            rag_service=rag_service,
+            vertex_ai_service=vertex_service
         )
-        self.emergency_symptoms = EMERGENCY_SYMPTOMS
-        self.doctor_required = DOCTOR_REQUIRED_SYMPTOMS
-        self.sensitive_topics = SENSITIVE_TOPICS
+        
+        # Emergency keywords that require immediate referral
+        self.EMERGENCY_KEYWORDS = {
+            "en": [
+                "chest pain", "heart attack", "can't breathe", "unconscious",
+                "severe bleeding", "stroke", "seizure", "convulsion", "suicide",
+                "poisoning", "overdose", "choking"
+            ],
+            "ur": [
+                "سینے میں درد", "دل کا دورہ", "سانس نہیں آ رہی", "بے ہوش",
+                "شدید خون", "فالج", "مرگی", "خودکشی", "زہر"
+            ],
+            "roman_urdu": [
+                "seene mein dard", "heart attack", "saans nahi aa rahi", "behosh",
+                "shadeed khoon", "falij", "mirgi", "khudkushi", "zeher"
+            ]
+        }
+        
+        # Dangerous advice that should never be given
+        self.PROHIBITED_ADVICE = [
+            "stop taking prescribed medication",
+            "ignore doctor's advice",
+            "self-diagnose",
+            "treat serious conditions at home without doctor",
+            "take someone else's prescription"
+        ]
+        
+        # Medical disclaimer in multiple languages
+        self.DISCLAIMER = {
+            "en": "⚕️ DISCLAIMER: This is health information, not medical advice. Always consult a qualified healthcare professional for diagnosis and treatment.",
+            "ur": "⚕️ اعلان: یہ صحت کی معلومات ہے، طبی مشورہ نہیں۔ تشخیص اور علاج کے لیے ہمیشہ ڈاکٹر سے ملیں۔",
+            "roman_urdu": "⚕️ DISCLAIMER: Yeh health information hai, medical advice nahi. Diagnosis aur treatment ke liye doctor se zaroor milein."
+        }
     
     async def process(self, context: AgentContext) -> AgentContext:
-        """
-        Pre-check: Scan for emergency situations
+        """Validate recommendations for safety"""
         
-        Steps:
-        1. Check for emergency symptoms
-        2. Check for doctor-required conditions
-        3. Flag sensitive topics
-        4. Set appropriate safety flags
-        """
-        self.logger.info("Safety pre-check", session_id=context.session_id)
+        user_input = (context.translated_input or context.user_input).lower()
+        language = context.user_language
         
-        user_text = (context.user_input + " " + (context.translated_input or "")).lower()
-        
-        # Step 1: Emergency detection
-        is_emergency = self._check_emergency(user_text)
-        if is_emergency:
+        # Check for emergency conditions
+        emergency_detected = self._check_emergency(user_input)
+        if emergency_detected:
             context.is_emergency = True
-            context.safety_flags.append("EMERGENCY_DETECTED")
+            context.safety_flags.append(f"EMERGENCY_DETECTED: {emergency_detected}")
             
-            self.log_decision(
-                context=context,
-                decision="Emergency situation detected",
-                reasoning="User input contains emergency symptoms requiring immediate medical attention",
-                confidence=0.95,
-                inputs_used=["user_input", "emergency_patterns"]
-            )
+            # Prepend emergency message to recommendations
+            emergency_msg = {
+                "en": "⚠️ EMERGENCY: Please call 1122 (Rescue) or 115 (Edhi) immediately, or go to the nearest hospital!",
+                "ur": "⚠️ ایمرجنسی: فوری 1122 (ریسکیو) یا 115 (ایدھی) کال کریں، یا قریبی ہسپتال جائیں!",
+                "roman_urdu": "⚠️ EMERGENCY: Fori 1122 (Rescue) ya 115 (Edhi) call karein, ya hospital jayein!"
+            }
             
-            return context
-        
-        # Step 2: Doctor required check
-        needs_doctor = self._check_doctor_required(user_text)
-        if needs_doctor:
-            context.safety_flags.append("DOCTOR_RECOMMENDED")
-        
-        # Step 3: Sensitive topic check
-        sensitive = self._check_sensitive_topics(user_text)
-        if sensitive:
-            context.safety_flags.append(f"SENSITIVE_TOPIC:{sensitive}")
-        
-        # Log decision
-        self.log_decision(
-            context=context,
-            decision="Safety pre-check passed" if not context.safety_flags else f"Flags: {', '.join(context.safety_flags)}",
-            reasoning="Scanned for emergency, doctor-required, and sensitive topics",
-            confidence=0.9,
-            inputs_used=["user_input", "safety_patterns"]
-        )
-        
-        return context
-    
-    async def validate_recommendations(self, context: AgentContext) -> AgentContext:
-        """
-        Post-check: Validate and filter recommendations
-        
-        Steps:
-        1. Filter unsafe recommendations
-        2. Add appropriate disclaimers
-        3. Ensure severity-appropriate guidance
-        """
-        self.logger.info("Validating recommendations", 
-                        session_id=context.session_id,
-                        rec_count=len(context.recommendations))
-        
-        validated_recommendations = []
-        
-        for rec in context.recommendations:
-            # Check if recommendation is safe
-            if self._is_safe_recommendation(rec):
-                validated_recommendations.append(rec)
+            if context.recommendations:
+                context.recommendations.insert(0, emergency_msg.get(language, emergency_msg["en"]))
             else:
-                self.logger.warning("Filtered unsafe recommendation", rec=rec[:50])
+                context.recommendations = [emergency_msg.get(language, emergency_msg["en"])]
         
-        # Add doctor visit recommendation if high-risk
-        if context.identified_risks:
-            high_severity = any(r.get("severity", 0) > 7 for r in context.identified_risks)
-            if high_severity and "DOCTOR_RECOMMENDED" not in context.safety_flags:
-                context.safety_flags.append("DOCTOR_RECOMMENDED")
-                
-                doctor_rec = self._get_doctor_recommendation(context.user_language)
-                validated_recommendations.insert(0, doctor_rec)
+        # Check for high-risk symptoms
+        risk_level = context.health_indicators.get("risk_level", "LOW")
+        if risk_level in ["HIGH", "CRITICAL"]:
+            see_doctor_msg = {
+                "en": "⚠️ Your symptoms may indicate a serious condition. Please see a doctor soon.",
+                "ur": "⚠️ آپ کی علامات سنگین حالت کی نشاندہی کر سکتی ہیں۔ براہ کرم جلد ڈاکٹر سے ملیں۔",
+                "roman_urdu": "⚠️ Aapki symptoms serious condition indicate kar sakti hain. Jald doctor se milein."
+            }
+            context.safety_flags.append(see_doctor_msg.get(language, see_doctor_msg["en"]))
+        
+        # Validate recommendations (remove any prohibited advice)
+        validated_recommendations = []
+        for rec in context.recommendations:
+            rec_lower = rec.lower()
+            is_safe = True
+            
+            for prohibited in self.PROHIBITED_ADVICE:
+                if prohibited in rec_lower:
+                    is_safe = False
+                    context.safety_flags.append(f"REMOVED_UNSAFE_ADVICE: {rec[:50]}...")
+                    break
+            
+            if is_safe:
+                validated_recommendations.append(rec)
         
         context.recommendations = validated_recommendations
         
+        # Always add disclaimer
+        disclaimer = self.DISCLAIMER.get(language, self.DISCLAIMER["en"])
+        if disclaimer not in context.safety_flags:
+            context.safety_flags.append(disclaimer)
+        
         # Log decision
-        self.log_decision(
-            context=context,
-            decision=f"Validated {len(validated_recommendations)} recommendations",
-            reasoning="Filtered unsafe recommendations and added appropriate warnings",
-            confidence=0.9,
-            inputs_used=["recommendations", "identified_risks", "safety_flags"]
+        decision = AgentDecision(
+            agent_name=self.name,
+            decision=f"Safety check: Emergency={context.is_emergency}, RiskLevel={risk_level}, ValidatedRecs={len(validated_recommendations)}",
+            reasoning="Checked for emergency keywords, validated recommendations, added medical disclaimer.",
+            confidence=0.95,
+            inputs_used=["user_input", "recommendations", "risk_level"],
+            language=language
         )
+        context.decisions.append(decision)
         
         return context
     
-    def _check_emergency(self, text: str) -> bool:
-        """Check if input contains emergency symptoms"""
-        text_lower = text.lower()
+    def _check_emergency(self, text: str) -> str:
+        """Check if text contains emergency keywords"""
         
-        for symptom in self.emergency_symptoms:
-            if symptom.lower() in text_lower:
-                return True
+        for lang, keywords in self.EMERGENCY_KEYWORDS.items():
+            for keyword in keywords:
+                if keyword in text:
+                    return keyword
         
-        return False
-    
-    def _check_doctor_required(self, text: str) -> bool:
-        """Check if symptoms require doctor visit"""
-        text_lower = text.lower()
-        
-        for symptom in self.doctor_required:
-            if symptom.lower() in text_lower:
-                return True
-        
-        return False
-    
-    def _check_sensitive_topics(self, text: str) -> Optional[str]:
-        """Check for sensitive health topics"""
-        text_lower = text.lower()
-        
-        for topic in self.sensitive_topics:
-            if topic in text_lower:
-                return topic
-        
-        return None
-    
-    def _is_safe_recommendation(self, recommendation: str) -> bool:
-        """Check if a recommendation is safe"""
-        rec_lower = recommendation.lower()
-        
-        for unsafe in UNSAFE_RECOMMENDATIONS:
-            if unsafe in rec_lower:
-                return False
-        
-        return True
-    
-    def _get_doctor_recommendation(self, language: str) -> str:
-        """Get doctor visit recommendation in appropriate language"""
-        messages = {
-            "en": "⚠️ Based on your symptoms, we strongly recommend consulting a healthcare professional for proper diagnosis and treatment.",
-            "ur": "⚠️ آپ کی علامات کی بنیاد پر، ہم تجویز کرتے ہیں کہ صحیح تشخیص کے لیے ڈاکٹر سے ضرور ملیں۔",
-            "roman_urdu": "⚠️ Aap ki symptoms ke mutabiq, doctor se milna zaroori hai.",
-        }
-        
-        return messages.get(language, messages["en"])
+        return ""
     
     def get_explanation(self, context: AgentContext, language: str = "en") -> str:
-        """Generate safety explanation"""
-        flags = context.safety_flags
+        """Generate human-readable explanation of safety checks"""
         
-        if "EMERGENCY_DETECTED" in flags:
+        is_emergency = context.is_emergency
+        risk_level = context.health_indicators.get("risk_level", "LOW")
+        flags_count = len(context.safety_flags)
+        
+        if is_emergency:
             explanations = {
-                "en": "⚠️ I detected symptoms that require immediate emergency care.",
-                "ur": "⚠️ میں نے ایسی علامات کا پتہ لگایا جن کو فوری طبی امداد کی ضرورت ہے۔",
-                "roman_urdu": "⚠️ Maine aisi symptoms detect ki hain jo emergency hain.",
+                "en": f"⚠️ EMERGENCY DETECTED! I've flagged this as urgent. Please seek immediate medical help by calling 1122 or 115.",
+                "ur": f"⚠️ ایمرجنسی! میں نے اسے فوری قرار دیا ہے۔ براہ کرم 1122 یا 115 کال کریں۔",
+                "roman_urdu": f"⚠️ EMERGENCY! Maine isko urgent flag kiya hai. 1122 ya 115 call karein."
             }
-        elif "DOCTOR_RECOMMENDED" in flags:
+        elif risk_level in ["HIGH", "CRITICAL"]:
             explanations = {
-                "en": "I recommend consulting a doctor for your symptoms.",
-                "ur": "میں تجویز کرتا ہوں کہ آپ اپنی علامات کے لیے ڈاکٹر سے ملیں۔",
-                "roman_urdu": "Main recommend karta hoon ke aap doctor se milein.",
+                "en": f"I've identified your risk level as {risk_level}. Please consult a doctor soon. I've added {flags_count} safety notes to my recommendations.",
+                "ur": f"آپ کی خطرے کی سطح {risk_level} ہے۔ براہ کرم جلد ڈاکٹر سے ملیں۔",
+                "roman_urdu": f"Aapka risk level {risk_level} hai. Jald doctor se milein."
             }
         else:
             explanations = {
-                "en": "Your symptoms appear manageable with self-care, but monitor for changes.",
-                "ur": "آپ کی علامات گھر پر سنبھالی جا سکتی ہیں، لیکن تبدیلیوں پر نظر رکھیں۔",
-                "roman_urdu": "Aap ki symptoms ghar par sambhali ja sakti hain.",
+                "en": f"I've validated all recommendations for safety. Risk level: {risk_level}. Remember: this is health information, not medical advice.",
+                "ur": f"میں نے تمام مشوروں کی حفاظت کی تصدیق کی ہے۔ خطرے کی سطح: {risk_level}۔",
+                "roman_urdu": f"Maine sab mashwaron ki safety check ki hai. Risk level: {risk_level}."
             }
         
         return explanations.get(language, explanations["en"])
